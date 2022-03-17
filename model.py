@@ -7,11 +7,11 @@ import torch.nn.functional as F
 from smiles_feature import *
 
 
-class Fingerprint(nn.Module):
+class GAT(nn.Module):
 
     def __init__(self, radius, T, input_feature_dim, input_bond_dim, \
                  fingerprint_dim, output_units_num, p_dropout, feature_dicts):
-        super(Fingerprint, self).__init__()
+        super(GAT, self).__init__()
         # graph attention for atom embedding
         self.atom_fc = nn.Linear(input_feature_dim, fingerprint_dim)   # params 0 1
         self.neighbor_fc = nn.Linear(input_feature_dim + input_bond_dim, fingerprint_dim) # params 2 3
@@ -203,5 +203,5 @@ class Fingerprint(nn.Module):
         # if map_save >= 0:
         #     joblib.dump(mol_feature.cpu().detach(), "./paper/tsne_map/"+time.strftime("%Y-%m-%d_%H:%M:%S", time.localtime())+"_"+str(map_save)+".pkl")
 
-        return mol_prediction, mol_feature
+        return mol_prediction
         # return atom_feature, mol_prediction, mol_feature

@@ -1,283 +1,210 @@
+#!/usr/bin/env python3
 import os
+import sys
 from tqdm import tqdm
 import numpy as np
 import pandas as pd
 import torch
+import torch.nn as nn
+import torch.nn.functional as F
 from torch_geometric.data import Data, InMemoryDataset, Dataset
 import torch_geometric.transforms as T
 from rdkit import Chem, RDConfig
 from rdkit.Chem import ChemicalFeatures, MolFromSmiles, AllChem
 from rdkit import Chem
-from rdkit.Chem.Scaffolds import MurckoScaffold
+from rdkit.Chem import Draw
+from sklearn import metrics
+from sklearn.metrics import precision_recall_curve, mean_squared_error
 import random
 
-def load_dataset_scaffold(path, dataset='hiv', seed=628, tasks=None):
-    save_path = path + 'processed/train_valid_test_{}_seed_{}.ckpt'.format(dataset, seed)
-    if os.path.isfile(save_path):
-        trn, val, test = torch.load(save_path)
-        return trn, val, test
 
-    pyg_dataset = MultiDataset(root=path, dataset=dataset, tasks=tasks)
-    df = pd.read_csv(os.path.join(path, 'raw/{}.csv'.format(dataset)))
-    smilesList = df.smiles.values
-    print("number of all smiles: ", len(smilesList))
-    remained_smiles = []
-    canonical_smiles_list = []
-    for smiles in smilesList:
-        try:
-            canonical_smiles_list.append(Chem.MolToSmiles(Chem.MolFromSmiles(smiles), isomericSmiles=True))
-            remained_smiles.append(smiles)
-        except:
-            print("not successfully processed smiles: ", smiles)
-            pass
-    print("number of successfully processed smiles: ", len(remained_smiles))
-    df = df[df["smiles"].isin(remained_smiles)].reset_index()
+data_dict = {
+    # muti_classification
+    "pcba":{"start": 0,"end": 128},
+    "tox21":{"start": 0,"end": 12},
+    "toxcast":{"start": 1,"end": 618},
+    "muv":{"start": 0,"end": 17},
 
-    trn_id, val_id, test_id, weights = scaffold_randomized_spliting(df, tasks=tasks, random_seed=seed)
-    trn, val, test = pyg_dataset[torch.LongTensor(trn_id)], \
-                     pyg_dataset[torch.LongTensor(val_id)], \
-                     pyg_dataset[torch.LongTensor(test_id)]
-    trn.weights = weights
+    #  sing_classification
+    "hiv":{"start": 2,"end": 3},
+    "jnk3":{"start": 1,"end": 2},
+    "gsk3":{"start": 1,"end": 2},
 
-    torch.save([trn, val, test], save_path)
-    return load_dataset_scaffold(path, dataset, seed, tasks)
+    #  muti_regression
+    "qm9": {"start": 5, "end": 17},
+    "chembl": {"start": 2, "end": 4},
 
-# copy from xiong et al. attentivefp
-class ScaffoldGenerator(object):
-    """
-    Generate molecular scaffolds.
-    Parameters
-    ----------
-    include_chirality : : bool, optional (default False)
-        Include chirality in scaffolds.
-    """
+    #  sing_regression
+    "ld50": {"start": 1, "end": 2},
+    "zinc": {"start": 1, "end": 2},
+    "pdbbind_full": {"start": 1, "end": 2},
+     }
 
-    def __init__(self, include_chirality=False):
-        self.include_chirality = include_chirality
 
-    def get_scaffold(self, mol):
-        """
-        Get Murcko scaffolds for molecules.
-        Murcko scaffolds are described in DOI: 10.1021/jm9602928. They are
-        essentially that part of the molecule consisting of rings and the
-        linker atoms between them.
-        Parameters
-        ----------
-        mols : array_like
-            Molecules.
-        """
-        return MurckoScaffold.MurckoScaffoldSmiles(
-            mol=mol, includeChirality=self.include_chirality)
+def predictive_entropy(predictions):
+    epsilon = sys.float_info.min
+    predictive_entropy = -np.sum(np.mean(predictions, axis=0) * np.log(np.mean(predictions, axis=0) + epsilon),
+                                 axis=-1)
 
-# copy from xiong et al. attentivefp
-def generate_scaffold(smiles, include_chirality=False):
-    """Compute the Bemis-Murcko scaffold for a SMILES string."""
-    mol = Chem.MolFromSmiles(smiles)
-    engine = ScaffoldGenerator(include_chirality=include_chirality)
-    scaffold = engine.get_scaffold(mol)
-    return scaffold
+    return predictive_entropy
 
-# copy from xiong et al. attentivefp
-def split(scaffolds_dict, smiles_tasks_df, tasks, weights, sample_size, random_seed=0):
-    count = 0
-    minor_count = 0
-    minor_class = np.argmax(weights[0])  # weights are inverse of the ratio
-    minor_ratio = 1 / weights[0][minor_class]
-    optimal_count = 0.1 * len(smiles_tasks_df)
-    while (count < optimal_count * 0.9 or count > optimal_count * 1.1) \
-            or (minor_count < minor_ratio * optimal_count * 0.9 \
-                or minor_count > minor_ratio * optimal_count * 1.1):
-        random_seed += 1
-        random.seed(random_seed)
-        scaffold = random.sample(list(scaffolds_dict.keys()), sample_size)
-        count = sum([len(scaffolds_dict[scaffold]) for scaffold in scaffold])
-        index = [index for scaffold in scaffold for index in scaffolds_dict[scaffold]]
-        minor_count = len(smiles_tasks_df.iloc[index, :][smiles_tasks_df[tasks[0]] == minor_class])
-    #     print(random)
-    return scaffold, index
 
-def scaffold_randomized_spliting(smiles_tasks_df, tasks=['HIV_active'], random_seed=8):
-    weights = []
+def classification_score(predict_label, true_label):
+    true_label = true_label.long()
+    tasks_num = true_label.shape[-1]
+    y_pred_tasks = []
+    y_true_tasks = []
+    for i in range(tasks_num):
+        validId = np.where((true_label[:, i].cpu().numpy() == 0) | (true_label[:, i].cpu().numpy() == 1))[0]
+        if len(validId) == 0:
+            continue
+        pred_qry = F.softmax(predict_label[:, i * 2:(i + 1) * 2][torch.tensor(validId)].detach().cpu(), dim=-1)
+        y_pred_tasks.extend(pred_qry[:, 1].view(-1).numpy())
+        y_true_tasks.extend(true_label[:, i][torch.tensor(validId)].cpu().numpy())
+
+    trn_roc = metrics.roc_auc_score(y_true_tasks, y_pred_tasks)
+    trn_prc = metrics.auc(precision_recall_curve(y_true_tasks, y_pred_tasks)[1],
+                           precision_recall_curve(y_true_tasks, y_pred_tasks)[0])
+    return trn_roc, trn_prc
+
+
+def classification_correct(predict_label, true_label):
+    true_label = true_label.long()
+    labels_num = true_label.shape[-1]
+    correct = 0
+    total = 0
+    for i in range(labels_num):
+
+        validId = np.where((true_label[:, i].cpu().numpy() == 0) | (true_label[:, i].cpu().numpy() == 1))[0]
+        if len(validId) == 0:
+            continue
+        pred_qry = F.softmax(predict_label[:, i * 2:(i + 1) * 2][torch.tensor(validId)], dim=-1).argmax(dim=-1)
+        correct += torch.eq(pred_qry, true_label[:, i][torch.tensor(validId)].cuda()).sum().item()
+        total += len(validId)
+    return correct / total
+
+
+def regression_rmse_score(predict_label, true_label):
+    true_label = true_label.float().cpu().numpy()
+    predict_label = predict_label.cpu().numpy()
+    labels_num = true_label.shape[-1]
+    loss = 0
+    for i in range(labels_num):
+        loss += np.sqrt(mean_squared_error(predict_label[:, i], true_label[:, i]))
+    return loss
+
+def regression_muti_rmse_score(predict_label, true_label):
+    true_label = true_label.float().cpu().numpy()
+    predict_label = predict_label.cpu().numpy()
+    labels_num = true_label.shape[-1]
+    loss = []
+    for i in range(labels_num):
+        loss.append(np.sqrt(mean_squared_error(predict_label[:, i], true_label[:, i])))
+    return loss
+
+def regression_mae_mean_score(predict_label, true_label):
+    true_label = true_label.float().cpu().numpy()
+    predict_label = predict_label.cpu().numpy()
+    labels_num = true_label.shape[-1]
+    mae = []
+    for i in range(labels_num):
+        mae.append(mean_squared_error(predict_label[:, i], true_label[:, i]))
+    return np.mean(mae)
+
+
+def regression_mae_score(predict_label, true_label):
+    true_label = true_label.float().cpu().numpy()
+    predict_label = predict_label.cpu().numpy()
+    labels_num = true_label.shape[-1]
+    mae = []
+    for i in range(labels_num):
+        mae.append(mean_squared_error(predict_label[:, i], true_label[:, i]))
+
+    return mae
+
+def qm9_mae_score(predict_label, true_label, std_list):
+    true_label = true_label.float().cpu().numpy()
+    predict_label = predict_label.cpu().numpy()
+
+    tasks = [
+        "mu", "alpha", "homo", "lumo", "gap", "r2", "zpve", "u0", "u298", "h298", "g298", "cv"
+    ]
+    eval_MAE_list = {}
+    y_val_list = {}
+    y_pred_list = {}
     for i, task in enumerate(tasks):
-        negative_df = smiles_tasks_df[smiles_tasks_df[task] == 0][["smiles", task]]
-        positive_df = smiles_tasks_df[smiles_tasks_df[task] == 1][["smiles", task]]
-        weights.append([(positive_df.shape[0] + negative_df.shape[0]) / negative_df.shape[0], \
-                        (positive_df.shape[0] + negative_df.shape[0]) / positive_df.shape[0]])
-    print('The dataset weights are', weights)
-    print('generating scaffold......')
-    scaffold_list = []
-    all_scaffolds_dict = {}
-    for index, smiles in enumerate(smiles_tasks_df['smiles']):
-        scaffold = generate_scaffold(smiles)
-        scaffold_list.append(scaffold)
-        if scaffold not in all_scaffolds_dict:
-            all_scaffolds_dict[scaffold] = [index]
-        else:
-            all_scaffolds_dict[scaffold].append(index)
-    #     smiles_tasks_df['scaffold'] = scaffold_list
+        y_pred_list[task] = np.array([])
+        y_val_list[task] = np.array([])
+        eval_MAE_list[task] = np.array([])
 
-    samples_size = int(len(all_scaffolds_dict.keys()) * 0.1)
-    test_scaffold, test_index = split(all_scaffolds_dict, smiles_tasks_df, tasks, weights, samples_size,
-                                      random_seed=random_seed)
-    training_scaffolds_dict = {x: all_scaffolds_dict[x] for x in all_scaffolds_dict.keys() if x not in test_scaffold}
-    valid_scaffold, valid_index = split(training_scaffolds_dict, smiles_tasks_df, tasks, weights, samples_size,
-                                        random_seed=random_seed)
+    for i, task in enumerate(tasks):
+        mae = mean_squared_error(predict_label[:, i], true_label[:, i])
 
-    training_scaffolds_dict = {x: training_scaffolds_dict[x] for x in training_scaffolds_dict.keys() if
-                               x not in valid_scaffold}
-    train_index = []
-    for ele in training_scaffolds_dict.values():
-        train_index += ele
-    assert len(train_index) + len(valid_index) + len(test_index) == len(smiles_tasks_df)
+        y_pred_list[task] = np.concatenate([y_pred_list[task], predict_label[:, i]])
+        y_val_list[task] = np.concatenate([y_val_list[task], true_label[:, i]])
+        eval_MAE_list[task] = np.concatenate([eval_MAE_list[task], [mae]])
 
-    return train_index, valid_index, test_index, weights
+    eval_MAE_normalized = np.array([eval_MAE_list[task].mean() for i, task in enumerate(tasks)])
+    eval_MAE = np.multiply(eval_MAE_normalized, np.array(std_list))
+
+    return eval_MAE
 
 
-def onehot_encoding(x, allowable_set):
-    if x not in allowable_set:
-        raise Exception("input {0} not in allowable set{1}:".format(
-            x, allowable_set))
-    return [x == s for s in allowable_set]
+
+def get_qm9_mean_std(data_dir):
+    tasks = [
+        "mu", "alpha", "homo", "lumo", "gap", "r2", "zpve", "u0", "u298", "h298", "g298", "cv"
+    ]
+    all_files = os.listdir(data_dir)
+    file_csv = []
+    for file in all_files:
+        path = os.path.join(data_dir, file)
+        file_csv.append(pd.read_csv(path))
+    all_data = pd.concat(file_csv)
+
+    mean_list = []
+    std_list = []
+    mad_list = []
+    ratio_list = []
+    for task in tasks:
+        mean = all_data[task].mean()
+        mean_list.append(mean)
+        std = all_data[task].std()
+        std_list.append(std)
+        mad = all_data[task].mad()
+        mad_list.append(mad)
+        ratio_list.append(std / mad)
+
+    return mean_list, std_list, mad_list, ratio_list
 
 
-def onehot_encoding_unk(x, allowable_set):
-    """Maps inputs not in the allowable set to the last element."""
-    if x not in allowable_set:
-        x = allowable_set[-1]
-    return [x == s for s in allowable_set]
+def qm9_normalized(mean_list, std_list, data):
+    labels_num = data.shape[-1]
+    for i in range(labels_num):
+        data[:,i] = (data[:,i] - mean_list[i])/std_list[i]
+    return data
 
-def atom_attr(mol, explicit_H=True, use_chirality=True):
-    feat = []
-    for i, atom in enumerate(mol.GetAtoms()):
-        # if atom.GetDegree()>5:
-        #     print(Chem.MolToSmiles(mol))
-        #     print(atom.GetSymbol())
-        results = onehot_encoding_unk(
-            atom.GetSymbol(),
-            ['B', 'C', 'N', 'O', 'F', 'Si', 'P', 'S', 'Cl', 'As', 'Se', 'Br', 'Te', 'I', 'At', 'other'
-             ]) + onehot_encoding(atom.GetDegree(),
-                                  [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]) + \
-                  [atom.GetFormalCharge(), atom.GetNumRadicalElectrons()] + \
-                  onehot_encoding_unk(atom.GetHybridization(), [
-                      Chem.rdchem.HybridizationType.SP, Chem.rdchem.HybridizationType.SP2,
-                      Chem.rdchem.HybridizationType.SP3, Chem.rdchem.HybridizationType.SP3D,
-                      Chem.rdchem.HybridizationType.SP3D2, 'other'
-                  ]) + [atom.GetIsAromatic()]
-        # In case of explicit hydrogen(QM8, QM9), avoid calling `GetTotalNumHs`
-        if not explicit_H:
-            results = results + onehot_encoding_unk(atom.GetTotalNumHs(),
-                                                    [0, 1, 2, 3, 4])
-        if use_chirality:
-            try:
-                results = results + onehot_encoding_unk(
-                    atom.GetProp('_CIPCode'),
-                    ['R', 'S']) + [atom.HasProp('_ChiralityPossible')]
-            #                 print(one_of_k_encoding_unk(atom.GetProp('_CIPCode'), ['R', 'S']) + [atom.HasProp('_ChiralityPossible')])
-            except:
-                results = results + [0, 0] + [atom.HasProp('_ChiralityPossible')]
-        feat.append(results)
+def get_weights(data_root, dataset_name, labels_num):
+    data_dir = os.path.join(data_root, dataset_name)
+    all_files = os.listdir(data_dir)
+    file_csv = []
+    for file in all_files:
+        path = os.path.join(data_dir, file)
+        file_csv.append(pd.read_csv(path))
+    all_data = pd.concat(file_csv)
 
-    return np.array(feat)
+    labels = np.array(all_data.iloc[:, data_dict[dataset_name]["start"]:data_dict[dataset_name]["end"]])
 
-
-def bond_attr(mol, use_chirality=True):
-    feat = []
-    index = []
-    n = mol.GetNumAtoms()
-    for i in range(n):
-        for j in range(n):
-            if i != j:
-                bond = mol.GetBondBetweenAtoms(i, j)
-                if bond is not None:
-                    bt = bond.GetBondType()
-                    bond_feats = [
-                        bt == Chem.rdchem.BondType.SINGLE, bt == Chem.rdchem.BondType.DOUBLE,
-                        bt == Chem.rdchem.BondType.TRIPLE, bt == Chem.rdchem.BondType.AROMATIC,
-                        bond.GetIsConjugated(),
-                        bond.IsInRing()
-                    ]
-                    if use_chirality:
-                        bond_feats = bond_feats + onehot_encoding_unk(
-                            str(bond.GetStereo()),
-                            ["STEREONONE", "STEREOANY", "STEREOZ", "STEREOE"])
-                    feat.append(bond_feats)
-                    index.append([i, j])
-
-    return np.array(index), np.array(feat)
-
-class MultiDataset(InMemoryDataset):
-
-    def __init__(self, root, dataset, tasks, transform=None, pre_transform=None, pre_filter=None):
-        self.tasks = tasks
-        self.dataset = dataset
-
-        self.weights = 0
-        super(MultiDataset, self).__init__(root, transform, pre_transform, pre_filter)
-        self.data, self.slices = torch.load(self.processed_paths[0])
-        # os.remove(self.processed_paths[0])
-
-    @property
-    def raw_file_names(self):
-        return ['{}.csv'.format(self.dataset)]
-
-    @property
-    def processed_file_names(self):
-        return ['{}.pt'.format(self.dataset)]
-
-    def download(self):
-        pass
-
-    def process(self):
-        df = pd.read_csv(self.raw_paths[0])
-        smilesList = df.smiles.values
-        print("number of all smiles: ", len(smilesList))
-        remained_smiles = []
-        canonical_smiles_list = []
-        for smiles in smilesList:
-            try:
-                canonical_smiles_list.append(Chem.MolToSmiles(Chem.MolFromSmiles(smiles), isomericSmiles=True))
-                remained_smiles.append(smiles)
-            except:
-                print("not successfully processed smiles: ", smiles)
-                pass
-        print("number of successfully processed smiles: ", len(remained_smiles))
-
-        df = df[df["smiles"].isin(remained_smiles)].reset_index()
-        target = df[self.tasks].values
-        smilesList = df.smiles.values
-        data_list = []
-
-        for i, smi in enumerate(tqdm(smilesList)):
-
-            mol = MolFromSmiles(smi)
-            data = self.mol2graph(mol)
-
-            if data is not None:
-                label = target[i]
-                label[np.isnan(label)] = 6
-                data.y = torch.LongTensor([label])
-                if self.dataset == 'esol' or self.dataset == 'freesolv' or self.dataset == 'lipophilicity':
-                    data.y = torch.FloatTensor([label])
-                data_list.append(data)
-
-        if self.pre_filter is not None:
-            data_list = [data for data in data_list if self.pre_filter(data)]
-        if self.pre_transform is not None:
-            data_list = [self.pre_transform(data) for data in data_list]
-
-        data, slices = self.collate(data_list)
-        torch.save((data, slices), self.processed_paths[0])
-
-    def mol2graph(self, mol):
-        if mol is None: return None
-        node_attr = atom_attr(mol)
-        edge_index, edge_attr = bond_attr(mol)
-        # pos = torch.FloatTensor(geom)
-        data = Data(
-            x=torch.FloatTensor(node_attr),
-            # pos=pos,
-            edge_index=torch.LongTensor(edge_index).t(),
-            edge_attr=torch.FloatTensor(edge_attr),
-            y=None  # None as a placeholder
-        )
-        return data
+    weights = []
+    for i in range(labels_num):
+        # print(i)
+        negative_num = len(np.where(labels[:,i] == 0)[0])
+        positive_num = len(np.where(labels[:,i] == 1)[0])
+        if negative_num == 0:
+            negative_num = 1
+        if positive_num == 0:
+            positive_num = 1
+        weights.append([(negative_num + positive_num) / negative_num, \
+                        (negative_num + positive_num) / positive_num])
+    print(weights)
+    return weights

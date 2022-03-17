@@ -1,7 +1,9 @@
 from rdkit import Chem
 from rdkit.Chem import MolFromSmiles
 import numpy as np
-import pickle
+import pandas as pd
+import joblib
+import os
 import random
 
 degrees = [0, 1, 2, 3, 4, 5]
@@ -201,6 +203,17 @@ def gen_descriptor_data(smilesList):
             # time.sleep(3)
     return smiles_to_fingerprint_array
 
+def save_smiles_dicts_from_dir(data_dir, filename):
+    smilesList = []
+    all_files = os.listdir(data_dir)
+    for file in all_files:
+        path = os.path.join(data_dir, file)
+        smiles_task = pd.read_csv(path)
+        smilesList.extend(smiles_task.smiles.values)
+
+    feature_dicts = save_smiles_dicts(smilesList, filename)
+    return feature_dicts
+
 def save_smiles_dicts(smilesList, filename):
     # first need to get the max atom length
     max_atom_len = 0
@@ -312,7 +325,7 @@ def save_smiles_dicts(smilesList, filename):
         'smiles_to_bond_neighbors': smiles_to_bond_neighbors,
         'smiles_to_rdkit_list': smiles_to_rdkit_list
     }
-    pickle.dump(feature_dicts, open(filename, "wb"))
+    joblib.dump(feature_dicts, open(filename, "wb"))
     print('feature dicts file saved as ' + filename)
     return feature_dicts
 
