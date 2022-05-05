@@ -6,7 +6,8 @@ from torch import nn
 from torch.nn import functional as F
 from copy import deepcopy, copy
 import torch.utils.data as data
-from MetaLearner import *
+# from MetaLearner import *
+from MetaLearner_map import *
 from model import GAT
 from smiles_feature import *
 from loss import *
@@ -16,7 +17,7 @@ import pandas as pd
 
 device = torch.device('cuda')
 
-seed = 199
+seed = 188
 torch.manual_seed(seed)
 random.seed(seed)
 np.random.seed(seed)
@@ -24,9 +25,9 @@ torch.cuda.manual_seed(seed)
 torch.cuda.manual_seed_all(seed)
 
 ### 准备数据迭代器
-k_spt = 10 # support data 的个数
+k_spt = 20 # support data 的个数
 batch_tasks_num = 8   # batch中 task 的个数
-k_query = 16  # query data 的个数
+k_query = 8  # query data 的个数
 
 
 p_dropout = 0.2
@@ -36,7 +37,7 @@ T = 2
 batchsz = 1000
 
 test_batchsz = 32
-epochs = 10
+epochs = 100
 
 print("batchsz:", batchsz, ",    seed :", seed)
 
@@ -48,11 +49,11 @@ num_bond_features = 10
 # dataset_name, tasks_type, train_tasks_num, labels_num = "toxcast", "muti_classification", 8, 617
 # dataset_name, tasks_type, train_tasks_num, labels_num = "muv", "muti_classification", 122, 17
 
-# dataset_name, tasks_type, train_tasks_num, labels_num = "hiv", "sing_classification", 54, 1
+dataset_name, tasks_type, train_tasks_num, labels_num = "hiv", "sing_classification", 54, 1
 # dataset_name, tasks_type, train_tasks_num, labels_num = "jnk3", "sing_classification", 50, 1
 # dataset_name, tasks_type, train_tasks_num, labels_num = "gsk3", "sing_classification", 28, 1
 
-dataset_name, tasks_type, train_tasks_num, labels_num = "pdbbind_full", "sing_regression", 8, 1
+# dataset_name, tasks_type, train_tasks_num, labels_num = "pdbbind_full", "sing_regression", 8, 1
 # dataset_name, tasks_type, train_tasks_num, labels_num = "zinc", "sing_regression", 10, 1
 # dataset_name, tasks_type, train_tasks_num, labels_num = "ld50", "sing_regression", 8, 1
 
@@ -100,6 +101,16 @@ a = pd.concat(smiles_task)
 df = pd.DataFrame(a, columns=row1)
 df.to_csv("./data2/"+dataset_name+"_test.csv", encoding="GBK", index=None)
 
+smiles_task = []
+for file in csv_files:
+    path = os.path.join(data_dir, file)
+    smiles_task.append(pd.read_csv(path))
+a = pd.concat(smiles_task)
+
+
+df = pd.DataFrame(a, columns=row1)
+df.to_csv("./data2/"+dataset_name+".csv", encoding="GBK", index=None)
+
 
 mean_list = None
 std_list = None
@@ -124,14 +135,12 @@ else:
     feature_dicts = save_smiles_dicts_from_dir(data_dir, feature_filename)
 
 if "sing_regression".__eq__(tasks_type):
-
     loss_function = regression_loss()
     correct_function = regression_rmse_score
     test_score = regression_rmse_score
     output_units_num = labels_num
 
 elif "muti_regression".__eq__(tasks_type):
-
     loss_function = regression_loss()
     correct_function = regression_rmse_score
     test_score = regression_muti_rmse_score
@@ -167,25 +176,34 @@ for epoch in range(epochs):
             print(accs_train)
             # print(loss)
 
-        if step % 50 == 0:
+        if step % 100 == 0:
             pred_tasks = [[] for _ in test_tasks]
             label_tasks = [[] for _ in test_tasks]
+            smi_tasks = [[] for _ in test_tasks]
             for task_index, (test_tmp, test_load) in enumerate(zip(data_test, dataset_test)):
                 # print(task_index)
                 support_x, support_y = test_tmp.support_x, test_tmp.support_y
 
-                pred_list, label_list = meta.finetunning(support_x, torch.tensor(support_y), test_load)
+                pred_list, label_list, smi_list = meta.finetunning(task_index, support_x, torch.tensor(support_y), test_load, test_tasks)
+
                 pred_tasks[task_index] = pred_list
                 label_tasks[task_index] = label_list
+                smi_tasks[task_index] = smi_list
+
             # accs_res = np.array(accs).mean(axis=1).astype(np.float16)
             pred_all = [[] for _ in range(len(pred_tasks[0]))]
             label_all = [[] for _ in range(len(label_tasks[0]))]
             for i in range(len(test_tasks)):
-                print('\n 测试集 第 ' + str(i) + ' 个任务:')
-                for t, (pred, label) in enumerate(zip(pred_tasks[i], label_tasks[i])):
+                print('\n 测试集 第 ' + str(i) + ' 个任务:', test_tasks[i])
+                for t, (pred, label, smi) in enumerate(zip(pred_tasks[i], label_tasks[i], smi_tasks[i])):
                     print(correct_function(pred, label),"\t", end='')
                     pred_all[t].extend(pred)
                     label_all[t].extend(label)
+
+                    # csv_data = np.concatenate((pred.cpu().numpy(), label.cpu().numpy(), np.array(smi)[:, np.newaxis]), axis=1)
+                    # df = pd.DataFrame(csv_data, columns=["smiles", "lable", "predict"])
+                    # df.to_csv("./paper_img/chembl/"+str(epoch)+"_"+str(step)+"_"+str(t)+"_"+test_tasks[i], encoding="GBK", index=None)
+
             print('\n 测试集 score:')
             if "qm9".__eq__(dataset_name):
                 for t, (pred, label) in enumerate(zip(pred_all, label_all)):

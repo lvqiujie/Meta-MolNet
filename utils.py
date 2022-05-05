@@ -36,15 +36,16 @@ data_dict = {
 
     #  sing_regression
     "ld50": {"start": 1, "end": 2},
-    "zinc": {"start": 1, "end": 2},
+    "zinc": {"start": 0, "end": 1},
     "pdbbind_full": {"start": 1, "end": 2},
      }
 
-
 def predictive_entropy(predictions):
     epsilon = sys.float_info.min
-    predictive_entropy = -np.sum(np.mean(predictions, axis=0) * np.log(np.mean(predictions, axis=0) + epsilon),
-                                 axis=-1)
+
+    predictive_entropy = - np.mean(predictions, axis=0) * np.log(np.mean(predictions, axis=0) + epsilon)
+    # predictive_entropy = -np.sum(np.mean(predictions, axis=0) * np.log(np.mean(predictions, axis=0) + epsilon),
+    #                              axis=0)
 
     return predictive_entropy
 

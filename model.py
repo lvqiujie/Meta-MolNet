@@ -203,5 +203,5 @@ class GAT(nn.Module):
         # if map_save >= 0:
         #     joblib.dump(mol_feature.cpu().detach(), "./paper/tsne_map/"+time.strftime("%Y-%m-%d_%H:%M:%S", time.localtime())+"_"+str(map_save)+".pkl")
 
-        return mol_prediction
+        return mol_prediction, mol_feature
         # return atom_feature, mol_prediction, mol_feature

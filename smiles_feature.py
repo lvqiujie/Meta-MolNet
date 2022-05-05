@@ -185,28 +185,30 @@ def array_rep_from_smiles(molgraph):
 def gen_descriptor_data(smilesList):
     smiles_to_fingerprint_array = {}
 
-    for i, smiles in enumerate(smilesList):
+    for i, smiles_raw in enumerate(smilesList):
         #         if i > 5:
         #             print("Due to the limited computational resource, submission with more than 5 molecules will not be processed")
         #             break
-        smiles = Chem.MolToSmiles(Chem.MolFromSmiles(smiles), isomericSmiles=True)
+        smiles = Chem.MolToSmiles(Chem.MolFromSmiles(smiles_raw), isomericSmiles=True)
         try:
 
             molgraph = graph_from_smiles(smiles)
             molgraph.sort_nodes_by_degree('atom')
             arrayrep = array_rep_from_smiles(molgraph)
-
+            # if smiles_to_fingerprint_array.__contains__(smiles):
+            #     print(smiles, "@@@@@@@@@@@@@222")
             smiles_to_fingerprint_array[smiles] = arrayrep
 
         except:
-            print(smiles,"%%%%%%%%")
+            print(smiles, "%%%%%%%%")
             # time.sleep(3)
     return smiles_to_fingerprint_array
 
 def save_smiles_dicts_from_dir(data_dir, filename):
     smilesList = []
     all_files = os.listdir(data_dir)
-    for file in all_files:
+    csv_files = [file for file in all_files if "csv".__eq__(file.split(".")[-1])]
+    for file in csv_files:
         path = os.path.join(data_dir, file)
         smiles_task = pd.read_csv(path)
         smilesList.extend(smiles_task.smiles.values)
@@ -335,10 +337,12 @@ def get_smiles_array(smilesList, feature_dicts):
     x_bonds = []
     x_atom_index = []
     x_bond_index = []
-    for smiles in smilesList:
-        if isinstance(smiles, tuple):
-            smiles = smiles[0]
-        smiles = Chem.MolToSmiles(Chem.MolFromSmiles(smiles), isomericSmiles=True)
+    for smiles_raw in smilesList:
+
+        if isinstance(smiles_raw, tuple):
+            smiles_raw = smiles_raw[0]
+        smiles = Chem.MolToSmiles(Chem.MolFromSmiles(smiles_raw), isomericSmiles=True)
+        # print(smiles_raw, smiles)
         x_mask.append(feature_dicts['smiles_to_atom_mask'][smiles])
         x_atom.append(feature_dicts['smiles_to_atom_info'][smiles])
         x_bonds.append(feature_dicts['smiles_to_bond_info'][smiles])
