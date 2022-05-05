@@ -71,46 +71,6 @@ print(test_tasks)
 batch_test_tasks_num = len(test_tasks)
 print("dataset name:", dataset_name, ",    test task num :", batch_test_tasks_num, "     k_spt:", k_spt)
 
-####################
-row1 = []
-smiles_task = []
-for file in train_tasks:
-    path = os.path.join(data_dir, file)
-    csv_data = pd.read_csv(path)
-    row1 = list(csv_data.columns.values)
-    smiles_task.append(pd.read_csv(path))
-a = pd.concat(smiles_task)
-
-train_num_int = round(len(a) * 0.8)
-
-
-df = pd.DataFrame(a[:train_num_int], columns=row1)
-df.to_csv("./data2/"+dataset_name+"_train.csv", encoding="GBK", index=None)
-
-
-df = pd.DataFrame(a[train_num_int:], columns=row1)
-df.to_csv("./data2/"+dataset_name+"_val.csv", encoding="GBK", index=None)
-
-smiles_task = []
-for file in test_tasks:
-    path = os.path.join(data_dir, file)
-    smiles_task.append(pd.read_csv(path))
-a = pd.concat(smiles_task)
-
-
-df = pd.DataFrame(a, columns=row1)
-df.to_csv("./data2/"+dataset_name+"_test.csv", encoding="GBK", index=None)
-
-smiles_task = []
-for file in csv_files:
-    path = os.path.join(data_dir, file)
-    smiles_task.append(pd.read_csv(path))
-a = pd.concat(smiles_task)
-
-
-df = pd.DataFrame(a, columns=row1)
-df.to_csv("./data2/"+dataset_name+".csv", encoding="GBK", index=None)
-
 
 mean_list = None
 std_list = None
