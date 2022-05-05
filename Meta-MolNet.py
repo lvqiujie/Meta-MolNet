@@ -25,7 +25,7 @@ torch.cuda.manual_seed(seed)
 torch.cuda.manual_seed_all(seed)
 
 ### 准备数据迭代器
-k_spt = 20 # support data 的个数
+k_spt = 20  # support data 的个数
 batch_tasks_num = 8   # batch中 task 的个数
 k_query = 8  # query data 的个数
 
