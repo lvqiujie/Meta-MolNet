@@ -38,8 +38,6 @@ python Meta-MolNet.py
   journal={},
   year={2022}
 }
-. 
-
 ```
 
 
