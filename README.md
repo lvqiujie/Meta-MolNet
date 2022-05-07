@@ -2,7 +2,7 @@
 
 Meta-MolNet is the first standard benchmark platform for measuring model generalization and uncertainty quantification capabilities. Meta-MolNet manages a molecular benchmark collection to measure the effectiveness of the proposed algorithm in uncertainty quantification and generalization evaluation, which contains broad public datasets of high molecules/scaffolds split by scaffolds. 
 
-![Image text](你刚复制的图片地址)
+![Image text](https://github.com/lol88/Meta-MolNet/blob/master/image.png)
 
 By publishing AI-ready data, evaluation frameworks, and baseline results, we aim to encourage researchers to focus on the new and challenging problem of achieving reliable domain generalization with few examples data. We hope to see the Meta-MolNet suite become a comprehensive resource for the AI-assisted drug discovery community.
 
