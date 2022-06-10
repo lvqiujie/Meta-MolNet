@@ -34,7 +34,7 @@ p_dropout = 0.2
 fingerprint_dim = 200
 radius = 2
 T = 2
-batchsz = 1000
+batchsz = 10000
 
 test_batchsz = 32
 epochs = 100
