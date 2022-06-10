@@ -16,8 +16,8 @@ class MetaLearner(nn.Module):
         self.update_step = 5  ## task-level inner update steps
         self.update_step_test = 5
         self.net = model
-        self.meta_lr = 0.0005
-        self.base_lr = 0.0005
+        self.meta_lr = 0.001
+        self.base_lr = 0.001
         print("meta_lr:", self.meta_lr,"      base_lr:  ", self.base_lr)
         self.meta_optim = torch.optim.Adam(self.net.parameters(), lr=self.meta_lr)
         # self.scheduler = lr_scheduler.StepLR(self.meta_optim, step_size=10, gamma=0.8)
@@ -101,7 +101,7 @@ class MetaLearner(nn.Module):
         loss = np.array(loss_list_qry) / task_num
         return accs, loss
 
-    def finetunning(self,task_index,  x_spt, y_spt, test_load):
+    def finetunning(self, task_index,  x_spt, y_spt, test_load, test_tasks):
         y_spt = y_spt.long().cuda()
         test_task_pred_list = []
         test_task_label_list = []

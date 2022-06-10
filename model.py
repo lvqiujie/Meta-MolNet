@@ -19,7 +19,7 @@ class GAT(nn.Module):
         self.align = nn.ModuleList([nn.Linear(2 * fingerprint_dim, 1) for r in range(radius)])  # params 12 13   14 15
         self.attend = nn.ModuleList([nn.Linear(fingerprint_dim, fingerprint_dim) for r in range(radius)])   # params 16 17   18 19
         # graph attention for molecule embedding
-        self.mol_GRUCell = nn.GRUCell(fingerprint_dim, fingerprint_dim) # params 20 21 22 23
+        self.mol_GRUCell1 = nn.GRUCell(fingerprint_dim, fingerprint_dim) # params 20 21 22 23
         self.mol_align = nn.Linear(2 * fingerprint_dim, 1)  # params 24 25
         self.mol_attend = nn.Linear(fingerprint_dim, fingerprint_dim)  # params 26  27
         # you may alternatively assign a different set of parameter in each attentive layer for molecule embedding like in atom embedding process.
@@ -28,8 +28,11 @@ class GAT(nn.Module):
         #         self.mol_attend = nn.ModuleList([nn.Linear(fingerprint_dim, fingerprint_dim) for t in range(T)])
 
         self.dropout = nn.Dropout(p=p_dropout)
-        self.output = nn.Linear(fingerprint_dim, output_units_num) # params 28 29
+        self.output = nn.Linear(fingerprint_dim*2, output_units_num) # params 28 29
 
+        self.mol_align2 = nn.Linear(2 * fingerprint_dim, 1)  # params 30 31
+        self.mol_attend2 = nn.Linear(fingerprint_dim, fingerprint_dim)  # params 32  33
+        self.mol_GRUCell2 = nn.GRUCell(fingerprint_dim, fingerprint_dim) # params 34 35 36 37
         self.radius = radius
         self.T = T
         self.feature_dicts = feature_dicts
@@ -161,6 +164,9 @@ class GAT(nn.Module):
         # do nonlinearity
         activated_features_mol = F.relu(mol_feature)
 
+        activated_features_mol2 = activated_features_mol.clone()
+        mol_feature2 = mol_feature.clone()
+
         mol_softmax_mask = atom_mask.clone()
         mol_softmax_mask[mol_softmax_mask == 0] = -9e8
         mol_softmax_mask[mol_softmax_mask == 1] = 0
@@ -199,9 +205,48 @@ class GAT(nn.Module):
             # do nonlinearity
             activated_features_mol = F.relu(mol_feature)
 
-        mol_prediction = F.linear(self.dropout(mol_feature), params[-2], params[-1])
+
+        activated_features_mol_reverse = torch.flip(activated_features_mol2, dims=[0])
+        activated_features_reverse = torch.flip(activated_features, dims=[0])
+        mol_softmax_mask_reverse = torch.flip(mol_softmax_mask.clone(), dims=[0])
+        atom_mask_reverse = torch.flip(atom_mask.clone(), dims=[0])
+        mol_feature_reverse = torch.flip(mol_feature2.clone(), dims=[0])
+        for t in range(self.T):
+            mol_prediction_expand = activated_features_mol_reverse.unsqueeze(-2).expand(batch_size, mol_length, fingerprint_dim)
+            mol_align = torch.cat([mol_prediction_expand, activated_features_reverse], dim=-1)
+
+            # self.mol_align2
+            mol_align_score = F.leaky_relu(F.linear(mol_align, params[30], params[31]))
+            mol_align_score = mol_align_score + mol_softmax_mask_reverse
+            mol_attention_weight = F.softmax(mol_align_score, -2)
+            mol_attention_weight = mol_attention_weight * atom_mask_reverse
+            #             print(mol_attention_weight.shape,mol_attention_weight)
+
+            # self.mol_attend2
+            activated_features_transform = F.linear(self.dropout(activated_features_reverse), params[32], params[33])
+            #             aggregate embeddings of atoms in a molecule
+            mol_context = torch.sum(torch.mul(mol_attention_weight, activated_features_transform), -2)
+            #             print(mol_context.shape,mol_context)
+            mol_context = F.elu(mol_context)
+
+            #   self.mol_GRUCell2
+            # mol_feature222 = self.mol_GRUCell(mol_context, mol_feature)
+            r = torch.sigmoid(F.linear(mol_context, params[34][:fingerprint_dim], params[36][:fingerprint_dim]) +
+                              F.linear(mol_feature_reverse, params[35][:fingerprint_dim], params[37][:fingerprint_dim]))
+            z = torch.sigmoid(F.linear(mol_context, params[34][fingerprint_dim:fingerprint_dim * 2], params[36][fingerprint_dim:fingerprint_dim * 2]) +
+                              F.linear(mol_feature_reverse, params[35][fingerprint_dim:fingerprint_dim * 2], params[37][fingerprint_dim:fingerprint_dim * 2]))
+            n = torch.tanh(F.linear(mol_context, params[34][fingerprint_dim * 2:], params[36][fingerprint_dim * 2:]) +
+                           torch.mul(r, (F.linear(mol_feature_reverse, params[35][fingerprint_dim * 2:], params[37][fingerprint_dim * 2:]))))
+            mol_feature_reverse = torch.mul((1 - z), n) + torch.mul(mol_feature_reverse, z)
+
+
+            # do nonlinearity
+            activated_features_mol_reverse = F.relu(mol_feature_reverse)
+
+        mol_feature_all = torch.cat([mol_feature, mol_feature_reverse], dim=1)
+        mol_prediction = F.linear(self.dropout(mol_feature_all), params[28], params[29])
         # if map_save >= 0:
         #     joblib.dump(mol_feature.cpu().detach(), "./paper/tsne_map/"+time.strftime("%Y-%m-%d_%H:%M:%S", time.localtime())+"_"+str(map_save)+".pkl")
 
-        return mol_prediction, mol_feature
+        return mol_prediction
         # return atom_feature, mol_prediction, mol_feature

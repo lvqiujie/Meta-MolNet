@@ -6,8 +6,8 @@ from torch import nn
 from torch.nn import functional as F
 from copy import deepcopy, copy
 import torch.utils.data as data
-# from MetaLearner import *
-from MetaLearner_map import *
+from MetaLearner import *
+# from MetaLearner_map import *
 from model import GAT
 from smiles_feature import *
 from loss import *
