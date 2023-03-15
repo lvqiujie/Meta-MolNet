@@ -7,14 +7,12 @@ import pandas as pd
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch_geometric.data import Data, InMemoryDataset, Dataset
-import torch_geometric.transforms as T
 from rdkit import Chem, RDConfig
 from rdkit.Chem import ChemicalFeatures, MolFromSmiles, AllChem
 from rdkit import Chem
 from rdkit.Chem import Draw
 from sklearn import metrics
-from sklearn.metrics import precision_recall_curve, mean_squared_error
+from sklearn.metrics import precision_recall_curve, mean_absolute_error, mean_squared_error
 import random
 
 
@@ -109,7 +107,7 @@ def regression_mae_mean_score(predict_label, true_label):
     labels_num = true_label.shape[-1]
     mae = []
     for i in range(labels_num):
-        mae.append(mean_squared_error(predict_label[:, i], true_label[:, i]))
+        mae.append(mean_absolute_error(predict_label[:, i], true_label[:, i]))
     return np.mean(mae)
 
 
@@ -119,7 +117,7 @@ def regression_mae_score(predict_label, true_label):
     labels_num = true_label.shape[-1]
     mae = []
     for i in range(labels_num):
-        mae.append(mean_squared_error(predict_label[:, i], true_label[:, i]))
+        mae.append(mean_absolute_error(predict_label[:, i], true_label[:, i]))
 
     return mae
 
@@ -139,7 +137,7 @@ def qm9_mae_score(predict_label, true_label, std_list):
         eval_MAE_list[task] = np.array([])
 
     for i, task in enumerate(tasks):
-        mae = mean_squared_error(predict_label[:, i], true_label[:, i])
+        mae = mean_absolute_error(predict_label[:, i], true_label[:, i])
 
         y_pred_list[task] = np.concatenate([y_pred_list[task], predict_label[:, i]])
         y_val_list[task] = np.concatenate([y_val_list[task], true_label[:, i]])
